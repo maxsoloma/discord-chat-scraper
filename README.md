@@ -21,7 +21,25 @@ incremental updates.
    backfill; later syncs fetch new messages and re-check the most recent 200 for
    edits.
 
-## Install
+## Quick start (`run.sh`)
+
+The launcher sets everything up on first run (virtualenv, dependencies, and the
+Chromium browser), then forwards your arguments to the CLI:
+
+```bash
+./run.sh auth                       # log in via browser, store the token
+./run.sh list                       # list your DM / group channels
+./run.sh sync                       # interactive: pick a chat, backfill/update
+./run.sh sync --channel <id>        # skip the menu
+./run.sh --db my.db sync            # custom database path
+```
+
+The first `./run.sh ...` downloads Chromium (~one-time). Override the interpreter
+with `PYTHON=python3.12 ./run.sh ...`. If you only authenticate via the
+`DISCORD_TOKEN` env var and never use `auth`, skip the browser download with
+`SKIP_BROWSER_INSTALL=1 ./run.sh ...`.
+
+## Install (manual)
 
 ```bash
 python3 -m venv .venv
