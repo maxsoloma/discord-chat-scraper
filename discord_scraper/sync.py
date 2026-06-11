@@ -67,4 +67,21 @@ class Syncer:
         return total
 
     def _refresh_edit_window(self, channel_id):
-        return 0
+        """Re-fetch the newest `edit_window` messages and upsert, catching edits."""
+        remaining = self._edit_window
+        before = None
+        total = 0
+        while remaining > 0:
+            limit = min(PAGE_LIMIT, remaining)
+            page = self._client.get_messages(
+                channel_id, before=before, limit=limit
+            )
+            if not page:
+                break
+            self._db.upsert_messages(channel_id, page)
+            total += len(page)
+            before = page[-1]["id"]
+            remaining -= len(page)
+            if len(page) < limit:
+                break
+        return total

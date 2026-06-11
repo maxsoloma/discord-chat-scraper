@@ -83,3 +83,42 @@ def test_update_with_more_than_one_page_of_new(tmp_path):
         assert db.newest_message_id("100") == "301"
     finally:
         db.close()
+
+
+def test_update_edit_window_overwrites_recent_edit(tmp_path):
+    db = Database(str(tmp_path / "a.db"))
+    try:
+        db.upsert_channel({"id": "100", "type": 1, "recipients": []})
+        db.upsert_messages("100", [_m(1), _m(2), _m(3)])
+        db.set_sync_state("100", "3", "2026-01-01T00:00:00+00:00")
+
+        # No NEW messages, but message 2 was edited on the server.
+        edited2 = _m(2)
+        edited2["content"] = "EDITED"
+        edited2["edited_timestamp"] = "2026-02-02T00:00:00+00:00"
+        client = FakeDiscordClient({"100": [_m(1), edited2, _m(3)]})
+
+        Syncer(client, db, edit_window=200).sync_channel(
+            {"id": "100", "type": 1, "recipients": []}
+        )
+
+        row = db.conn.execute("SELECT content FROM messages WHERE id='2'").fetchone()
+        assert row["content"] == "EDITED"
+    finally:
+        db.close()
+
+
+def test_edit_window_respects_configured_size(tmp_path):
+    db = Database(str(tmp_path / "a.db"))
+    try:
+        db.upsert_channel({"id": "100", "type": 1, "recipients": []})
+        db.upsert_messages("100", [_m(i) for i in range(1, 51)])
+        db.set_sync_state("100", "50", "2026-01-01T00:00:00+00:00")
+        client = FakeDiscordClient({"100": [_m(i) for i in range(1, 51)]})
+
+        # edit_window=10 means only the newest 10 are re-fetched for edits.
+        syncer = Syncer(client, db, edit_window=10)
+        refreshed = syncer._refresh_edit_window("100")
+        assert refreshed == 10
+    finally:
+        db.close()
