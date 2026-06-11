@@ -24,17 +24,37 @@ incremental updates.
 ## Quick start (`run.sh`)
 
 The launcher sets everything up on first run (virtualenv, dependencies, and the
-Chromium browser), then forwards your arguments to the CLI:
+Chromium browser). Run it with **no arguments** for an interactive menu:
+
+```bash
+./run.sh
+```
+
+```
+=== Discord Chat Scraper ===
+  1) Log in (capture token via browser)
+  2) List your DM / group chats
+  3) Sync a chat (choose from a menu)
+  4) Sync a chat by channel ID
+  5) Quit
+Select [1-5]:
+```
+
+The menu loops, so you can log in, then list, then sync without restarting.
+Pick `5` (or press Ctrl-D) to quit.
+
+Prefer to type commands? Pass them directly and the menu is skipped (handy for
+scripts):
 
 ```bash
 ./run.sh auth                       # log in via browser, store the token
 ./run.sh list                       # list your DM / group channels
 ./run.sh sync                       # interactive: pick a chat, backfill/update
-./run.sh sync --channel <id>        # skip the menu
+./run.sh sync --channel <id>        # skip the chat menu
 ./run.sh --db my.db sync            # custom database path
 ```
 
-The first `./run.sh ...` downloads Chromium (~one-time). Override the interpreter
+The first `./run.sh` downloads Chromium (~one-time). Override the interpreter
 with `PYTHON=python3.12 ./run.sh ...`. If you only authenticate via the
 `DISCORD_TOKEN` env var and never use `auth`, skip the browser download with
 `SKIP_BROWSER_INSTALL=1 ./run.sh ...`.
