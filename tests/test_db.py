@@ -82,3 +82,39 @@ def test_upsert_messages_replaces_attachments(tmp_path):
         assert count == 0
     finally:
         db.close()
+
+
+def test_upsert_channel_then_update_keeps_sync_state(tmp_path):
+    db = Database(str(tmp_path / "a.db"))
+    try:
+        db.upsert_channel({"id": "100", "type": 1, "name": None,
+                           "recipients": [{"id": "7", "username": "ann"}]})
+        db.set_sync_state("100", "55", "2026-01-01T00:00:00+00:00")
+        # Re-upsert the channel (e.g. name changed) must NOT wipe sync state.
+        db.upsert_channel({"id": "100", "type": 1, "name": "renamed", "recipients": []})
+        last_id, last_at = db.get_sync_state("100")
+        assert last_id == "55"
+        assert last_at == "2026-01-01T00:00:00+00:00"
+        row = db.conn.execute("SELECT name FROM channels WHERE id='100'").fetchone()
+        assert row["name"] == "renamed"
+    finally:
+        db.close()
+
+
+def test_get_sync_state_unknown_channel_is_none(tmp_path):
+    db = Database(str(tmp_path / "a.db"))
+    try:
+        assert db.get_sync_state("nope") is None
+    finally:
+        db.close()
+
+
+def test_newest_message_id_uses_numeric_order(tmp_path):
+    db = Database(str(tmp_path / "a.db"))
+    try:
+        # "100" < "99" lexically but 100 > 99 numerically; snowflakes are numeric.
+        db.upsert_messages("100", [_msg("99"), _msg("100")])
+        assert db.newest_message_id("100") == "100"
+        assert db.newest_message_id("empty") is None
+    finally:
+        db.close()

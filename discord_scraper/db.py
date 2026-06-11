@@ -121,3 +121,50 @@ class Database:
                 )
         self.conn.commit()
         return len(messages)
+
+    def upsert_channel(self, channel):
+        """Insert or update a channel row WITHOUT touching its sync state."""
+        self.conn.execute(
+            """
+            INSERT INTO channels (id, type, name, recipients_json)
+            VALUES (:id, :type, :name, :recipients_json)
+            ON CONFLICT(id) DO UPDATE SET
+                type            = excluded.type,
+                name            = excluded.name,
+                recipients_json = excluded.recipients_json
+            """,
+            {
+                "id": channel["id"],
+                "type": channel.get("type"),
+                "name": channel.get("name"),
+                "recipients_json": json.dumps(
+                    channel.get("recipients") or [], ensure_ascii=False
+                ),
+            },
+        )
+        self.conn.commit()
+
+    def set_sync_state(self, channel_id, last_message_id, last_synced_at):
+        self.conn.execute(
+            "UPDATE channels SET last_synced_message_id = ?, last_synced_at = ? "
+            "WHERE id = ?",
+            (last_message_id, last_synced_at, channel_id),
+        )
+        self.conn.commit()
+
+    def get_sync_state(self, channel_id):
+        row = self.conn.execute(
+            "SELECT last_synced_message_id, last_synced_at FROM channels WHERE id = ?",
+            (channel_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return (row["last_synced_message_id"], row["last_synced_at"])
+
+    def newest_message_id(self, channel_id):
+        row = self.conn.execute(
+            "SELECT id FROM messages WHERE channel_id = ? "
+            "ORDER BY CAST(id AS INTEGER) DESC LIMIT 1",
+            (channel_id,),
+        ).fetchone()
+        return row["id"] if row else None
