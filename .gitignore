@@ -4,3 +4,12 @@
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# Discord chat scraper
+__pycache__/
+*.pyc
+.venv/
+discord_archive.db
+discord_archive.db-*
+.token
+discord-profile/
