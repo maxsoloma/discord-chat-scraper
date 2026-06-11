@@ -8,8 +8,11 @@
 # Or pass a CLI command directly (scriptable, skips the menu):
 #   ./run.sh auth                       # log in via browser, store the token
 #   ./run.sh list                       # list your DM / group channels
-#   ./run.sh sync                       # interactive: pick a chat, backfill/update
-#   ./run.sh sync --channel 123456789   # skip the chat menu
+#   ./run.sh sync                       # interactive: choose DMs or a server
+#   ./run.sh sync --dms                 # straight to the DM / group list
+#   ./run.sh sync --server              # straight to the server -> channel flow
+#   ./run.sh sync --channel 123456789   # one channel (DM or server) by id
+#   ./run.sh sync --guild 987654321     # every text channel of a server by id
 #   ./run.sh --db my.db sync            # custom database path
 #
 # On first run it bootstraps a local virtualenv (installs the package and the
@@ -49,18 +52,20 @@ menu() {
         printf '\n=== Discord Chat Scraper ===\n'
         printf '  1) Log in (capture token via browser)\n'
         printf '  2) List your DM / group chats\n'
-        printf '  3) Sync a chat (choose from a menu)\n'
-        printf '  4) Sync a chat by channel ID\n'
-        printf '  5) Quit\n'
-        if ! read -rp 'Select [1-5]: ' choice; then
+        printf '  3) Sync a DM / group chat\n'
+        printf '  4) Sync from a server\n'
+        printf '  5) Sync a chat by channel ID\n'
+        printf '  6) Quit\n'
+        if ! read -rp 'Select [1-6]: ' choice; then
             printf '\n'           # Ctrl-D / EOF
             return 0
         fi
         case "$choice" in
             1) cli auth || echo "[run.sh] 'auth' failed (see error above)." >&2 ;;
             2) cli list || echo "[run.sh] 'list' failed (see error above)." >&2 ;;
-            3) cli sync || echo "[run.sh] 'sync' failed (see error above)." >&2 ;;
-            4)
+            3) cli sync --dms || echo "[run.sh] 'sync' failed (see error above)." >&2 ;;
+            4) cli sync --server || echo "[run.sh] 'sync' failed (see error above)." >&2 ;;
+            5)
                 if ! read -rp 'Channel ID: ' channel_id; then
                     printf '\n'
                     continue
@@ -72,7 +77,7 @@ menu() {
                     echo "[run.sh] No channel ID entered." >&2
                 fi
                 ;;
-            5) return 0 ;;
+            6) return 0 ;;
             "") : ;;               # empty input -> just redraw the menu
             *) echo "[run.sh] Invalid choice: $choice" >&2 ;;
         esac

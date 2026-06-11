@@ -47,6 +47,11 @@ class DiscordClient:
 
     DM = 1
     GROUP_DM = 3
+    GUILD_TEXT = 0
+    GUILD_ANNOUNCEMENT = 5
+    # Channel types whose top-level /messages timeline can be archived.
+    FETCHABLE_TEXT_TYPES = (GUILD_TEXT, GUILD_ANNOUNCEMENT)
+    GUILDS_PAGE_LIMIT = 200  # max guilds per /users/@me/guilds page (also the user cap)
 
     def get_current_user(self):
         return self._request("GET", "/users/@me").json()
@@ -54,6 +59,28 @@ class DiscordClient:
     def list_dm_channels(self):
         channels = self._request("GET", "/users/@me/channels").json()
         return [c for c in channels if c.get("type") in (self.DM, self.GROUP_DM)]
+
+    def list_guilds(self):
+        """List the guilds (servers) the user belongs to (paginated by id asc)."""
+        guilds = []
+        after = None
+        while True:
+            params = {"limit": self.GUILDS_PAGE_LIMIT}
+            if after is not None:
+                params["after"] = after
+            page = self._request("GET", "/users/@me/guilds", params=params).json()
+            guilds.extend(page)
+            if len(page) < self.GUILDS_PAGE_LIMIT:
+                break
+            after = page[-1]["id"]
+        return guilds
+
+    def list_guild_channels(self, guild_id):
+        """List a guild's archivable text channels (GUILD_TEXT, GUILD_ANNOUNCEMENT)."""
+        channels = self._request("GET", f"/guilds/{guild_id}/channels").json()
+        text = [c for c in channels if c.get("type") in self.FETCHABLE_TEXT_TYPES]
+        text.sort(key=lambda c: c.get("position") or 0)
+        return text
 
     def get_messages(self, channel_id, *, before=None, after=None, limit=100):
         params = {"limit": limit}

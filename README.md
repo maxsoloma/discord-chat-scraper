@@ -1,7 +1,7 @@
 # Discord Chat Scraper
 
-Archive your own Discord DMs and group chats into a SQLite database, with
-incremental updates.
+Archive your own Discord DMs, group chats, and server (guild) text channels into
+a SQLite database, with incremental updates.
 
 > ⚠️ **Terms of Service warning.** This tool automates a Discord *user* account,
 > which violates Discord's Terms of Service and can get your account banned. Use
@@ -16,7 +16,9 @@ incremental updates.
    `Authorization` header of the first authenticated API request, then stores it
    in your OS keyring. The browser is used *only* for this step.
 2. **Fetch** — all message fetching goes through Discord's REST API directly
-   (fast, no browser). You pick a DM or group chat from an interactive menu.
+   (fast, no browser). From an interactive menu you choose a source — a DM /
+   group chat, or a server — then pick a channel (or sync a whole server's text
+   channels at once). Every menu has a `0) Back` option to step up a level.
 3. **Store** — messages land in SQLite. The first sync of a channel is a full
    backfill; later syncs fetch new messages and re-check the most recent 200 for
    edits.
@@ -34,14 +36,19 @@ Chromium browser). Run it with **no arguments** for an interactive menu:
 === Discord Chat Scraper ===
   1) Log in (capture token via browser)
   2) List your DM / group chats
-  3) Sync a chat (choose from a menu)
-  4) Sync a chat by channel ID
-  5) Quit
-Select [1-5]:
+  3) Sync a DM / group chat
+  4) Sync from a server
+  5) Sync a chat by channel ID
+  6) Quit
+Select [1-6]:
 ```
 
-The menu loops, so you can log in, then list, then sync without restarting.
-Pick `5` (or press Ctrl-D) to quit.
+The menu loops, so you can log in, then sync several chats without restarting.
+Pick `6` (or press Ctrl-D) to quit. Inside the sync flows, `0) Back` steps up a
+level (channel → server → source → main menu).
+
+Choosing **4) Sync from a server** lists your servers; pick one, then choose a
+single channel or the whole server (all its text channels).
 
 Prefer to type commands? Pass them directly and the menu is skipped (handy for
 scripts):
@@ -49,8 +56,11 @@ scripts):
 ```bash
 ./run.sh auth                       # log in via browser, store the token
 ./run.sh list                       # list your DM / group channels
-./run.sh sync                       # interactive: pick a chat, backfill/update
-./run.sh sync --channel <id>        # skip the chat menu
+./run.sh sync                       # interactive: choose DMs or a server
+./run.sh sync --dms                 # straight to the DM / group list
+./run.sh sync --server              # straight to the server -> channel flow
+./run.sh sync --channel <id>        # one channel (DM or server) by id
+./run.sh sync --guild <id>          # every text channel of a server by id
 ./run.sh --db my.db sync            # custom database path
 ```
 
@@ -76,11 +86,19 @@ python3 -m venv .venv
 # 2. List your DM / group channels:
 .venv/bin/python -m discord_scraper list
 
-# 3. Fetch (first run = full backfill) or update a chat into SQLite:
-.venv/bin/python -m discord_scraper sync                 # interactive menu
-.venv/bin/python -m discord_scraper sync --channel <id>  # by id
+# 3. Fetch (first run = full backfill) or update channels into SQLite:
+.venv/bin/python -m discord_scraper sync                 # interactive: DMs or a server
+.venv/bin/python -m discord_scraper sync --dms           # DM / group list
+.venv/bin/python -m discord_scraper sync --server        # server -> channel flow
+.venv/bin/python -m discord_scraper sync --channel <id>  # one channel by id
+.venv/bin/python -m discord_scraper sync --guild <id>    # all text channels of a server
 .venv/bin/python -m discord_scraper --db my.db sync      # custom database path
 ```
+
+Server channels are fetched the same way as DMs (same user token). When you sync
+a whole server, channels you have no access to are skipped automatically. Only
+normal text and announcement channels are included — voice text, forum/media
+containers, and threads are not.
 
 Re-running `sync` on an already-archived channel fetches new messages and
 re-checks the most recent 200 messages for edits.

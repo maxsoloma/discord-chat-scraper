@@ -3,7 +3,7 @@ import types
 import pytest
 
 from discord_scraper import cli
-from discord_scraper.api import Unauthorized
+from discord_scraper.api import Forbidden, Unauthorized
 from discord_scraper.cli import channel_label, choose_channel
 
 
@@ -43,11 +43,14 @@ def test_choose_channel_returns_selected(monkeypatch):
 # --- Command-dispatch layer (discord-chat-scraper-de5) ---------------------
 
 class _FakeClient:
-    """Stand-in for DiscordClient: context manager + list_dm_channels + close."""
+    """Stand-in for DiscordClient: context manager + channel/guild listings."""
 
-    def __init__(self, channels=None, *, raise_unauth=False):
+    def __init__(self, channels=None, *, raise_unauth=False, guilds=None,
+                 guild_channels=None):
         self._channels = channels or []
         self._raise_unauth = raise_unauth
+        self._guilds = guilds or []
+        self._guild_channels = guild_channels or {}  # {guild_id: [channel dicts]}
         self.closed = False
 
     def __enter__(self):
@@ -63,6 +66,14 @@ class _FakeClient:
         if self._raise_unauth:
             raise Unauthorized()
         return self._channels
+
+    def list_guilds(self):
+        if self._raise_unauth:
+            raise Unauthorized()
+        return self._guilds
+
+    def list_guild_channels(self, guild_id):
+        return self._guild_channels.get(guild_id, [])
 
 
 def test_main_dispatches_to_named_command(monkeypatch):
@@ -131,7 +142,6 @@ def test_cmd_sync_with_channel_id_runs_syncer(monkeypatch, tmp_path, capsys):
 
 
 def test_cmd_sync_reauths_on_unauthorized(monkeypatch, tmp_path):
-    chans = [{"id": "5", "type": 1, "recipients": [{"username": "amy"}]}]
     token_calls = []
 
     def fake_get_token(*, force_relogin=False):
@@ -139,32 +149,143 @@ def test_cmd_sync_reauths_on_unauthorized(monkeypatch, tmp_path):
         return "T"
 
     monkeypatch.setattr(cli, "get_token", fake_get_token)
-    clients = iter([_FakeClient(raise_unauth=True), _FakeClient(chans)])
-    monkeypatch.setattr(cli, "DiscordClient", lambda token: next(clients))
+    monkeypatch.setattr(cli, "DiscordClient", lambda token: _FakeClient())
 
-    captured = {}
+    synced = []
 
-    class FakeSyncer:
+    class FlakySyncer:
+        calls = 0
+
         def __init__(self, client, db):
-            captured["client"] = client
-        def sync_channel(self, channel):
-            captured["channel"] = channel
-            return 1
+            pass
 
-    monkeypatch.setattr(cli, "Syncer", FakeSyncer)
-    args = types.SimpleNamespace(db=str(tmp_path / "a.db"), channel="5")
+        def sync_channel(self, channel):
+            FlakySyncer.calls += 1
+            if FlakySyncer.calls == 1:
+                raise Unauthorized()  # stale token surfaces during the fetch
+            synced.append(channel["id"])
+            return 2
+
+    monkeypatch.setattr(cli, "Syncer", FlakySyncer)
+    args = _sync_args(tmp_path, channel="5")
     cli.cmd_sync(args)
 
-    # First attempt used the stored token, then a forced re-login after 401.
+    # Stored token first, then a forced re-login after 401; second attempt works.
     assert token_calls == [False, True]
-    assert captured["channel"]["id"] == "5"
+    assert synced == ["5"]
 
 
-def test_run_sync_with_no_channels_prints_and_skips_db(monkeypatch, tmp_path, capsys):
-    monkeypatch.setattr(
-        cli, "Database",
-        lambda *a, **k: pytest.fail("Database must not be opened when there are no channels"),
+def _sync_args(tmp_path, *, channel=None, guild=None, dms=False, server=False):
+    return types.SimpleNamespace(
+        db=str(tmp_path / "a.db"), channel=channel, guild=guild, dms=dms, server=server
     )
-    args = types.SimpleNamespace(db=str(tmp_path / "a.db"), channel=None)
-    cli._run_sync(_FakeClient([]), [], args)
+
+
+def _recording_syncer(monkeypatch, *, forbidden_ids=()):
+    synced = []
+
+    class RecSyncer:
+        def __init__(self, client, db):
+            pass
+
+        def sync_channel(self, channel):
+            if channel["id"] in forbidden_ids:
+                raise Forbidden(channel["id"])
+            synced.append(channel["id"])
+            return 1
+
+    monkeypatch.setattr(cli, "Syncer", RecSyncer)
+    return synced
+
+
+# --- Server (guild) support + back navigation ------------------------------
+
+def test_channel_label_for_guild_text_channel_uses_hash_name():
+    assert channel_label({"id": "7", "type": 0, "name": "general"}) == "#general"
+    assert channel_label({"id": "8", "type": 5, "name": "news"}) == "#news"
+
+
+def test_guild_label_uses_name_then_id():
+    assert cli.guild_label({"id": "9", "name": "My Server"}) == "My Server"
+    assert cli.guild_label({"id": "9"}) == "9"
+
+
+def test_choose_returns_back_on_zero():
+    result = cli.choose([{"id": "1"}], lambda c: c["id"], "Pick",
+                        input_fn=lambda prompt: "0")
+    assert result is cli.BACK
+
+
+def test_choose_retries_on_invalid_then_returns_item():
+    inputs = iter(["x", "9", "2"])  # non-numeric, out-of-range, then valid
+    result = cli.choose([{"id": "a"}, {"id": "b"}], lambda c: c["id"], "Pick",
+                        input_fn=lambda prompt: next(inputs))
+    assert result == {"id": "b"}
+
+
+def test_dm_flow_with_no_channels_prints_message(capsys):
+    cli._dm_flow(_FakeClient([]), None, types.SimpleNamespace(db="x.db"))
     assert "No DM or group channels found." in capsys.readouterr().out
+
+
+def test_sync_whole_guild_syncs_text_channels_and_skips_forbidden(monkeypatch, capsys):
+    synced = _recording_syncer(monkeypatch, forbidden_ids={"c2"})
+    client = _FakeClient(guild_channels={"g1": [
+        {"id": "c1", "type": 0, "name": "general"},
+        {"id": "c2", "type": 0, "name": "secret"},
+        {"id": "c3", "type": 5, "name": "news"},
+    ]})
+    cli._sync_whole_guild(client, None, {"id": "g1", "name": "Srv"},
+                          types.SimpleNamespace(db="x.db"))
+    assert synced == ["c1", "c3"]  # c2 raised Forbidden -> skipped
+    out = capsys.readouterr().out
+    assert "Syncing 3 text channel(s) from Srv" in out
+    assert "skipped #secret (no access)" in out
+
+
+def test_server_flow_back_at_guild_list_exits(monkeypatch):
+    synced = _recording_syncer(monkeypatch)
+    client = _FakeClient(guilds=[{"id": "g1", "name": "Srv"}])
+    cli._server_flow(client, None, types.SimpleNamespace(db="x.db"),
+                     input_fn=lambda prompt: "0")
+    assert synced == []
+
+
+def test_server_flow_back_from_scope_returns_to_guild_list(monkeypatch):
+    # pick guild 1 -> scope menu Back(0) -> back at guild list -> Back(0) exits
+    inputs = iter(["1", "0", "0"])
+    synced = _recording_syncer(monkeypatch)
+    client = _FakeClient(
+        guilds=[{"id": "g1", "name": "Srv"}],
+        guild_channels={"g1": [{"id": "c1", "type": 0, "name": "general"}]},
+    )
+    cli._server_flow(client, None, types.SimpleNamespace(db="x.db"),
+                     input_fn=lambda prompt: next(inputs))
+    assert synced == []  # backed all the way out without syncing
+
+
+def test_server_flow_whole_server_then_back(monkeypatch):
+    # guild 1 -> scope "2" (whole server) -> scope Back(0) -> guild Back(0)
+    inputs = iter(["1", "2", "0", "0"])
+    synced = _recording_syncer(monkeypatch)
+    client = _FakeClient(
+        guilds=[{"id": "g1", "name": "Srv"}],
+        guild_channels={"g1": [
+            {"id": "c1", "type": 0, "name": "general"},
+            {"id": "c2", "type": 5, "name": "news"},
+        ]},
+    )
+    cli._server_flow(client, None, types.SimpleNamespace(db="x.db"),
+                     input_fn=lambda prompt: next(inputs))
+    assert synced == ["c1", "c2"]
+
+
+def test_source_menu_dm_then_back(monkeypatch):
+    # source "1" (DMs) -> chat list Back(0) -> source Back(0)
+    inputs = iter(["1", "0", "0"])
+    synced = _recording_syncer(monkeypatch)
+    client = _FakeClient(channels=[{"id": "d1", "type": 1,
+                                    "recipients": [{"username": "a"}]}])
+    cli._source_menu(client, None, types.SimpleNamespace(db="x.db"),
+                     input_fn=lambda prompt: next(inputs))
+    assert synced == []
