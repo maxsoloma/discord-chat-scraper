@@ -289,3 +289,23 @@ def test_source_menu_dm_then_back(monkeypatch):
     cli._source_menu(client, None, types.SimpleNamespace(db="x.db"),
                      input_fn=lambda prompt: next(inputs))
     assert synced == []
+
+
+def test_guild_channel_flow_syncs_picked_channel_then_back(monkeypatch):
+    # pick channel 1 -> sync it -> Back(0) returns to the scope menu
+    inputs = iter(["1", "0"])
+    synced = _recording_syncer(monkeypatch)
+    client = _FakeClient(guild_channels={"g1": [{"id": "c1", "type": 0,
+                                                 "name": "general"}]})
+    cli._guild_channel_flow(client, None, {"id": "g1", "name": "Srv"},
+                            types.SimpleNamespace(db="x.db"),
+                            input_fn=lambda prompt: next(inputs))
+    assert synced == ["c1"]
+
+
+def test_main_exits_cleanly_on_ctrl_d(monkeypatch):
+    def boom(args):
+        raise EOFError()
+
+    monkeypatch.setitem(cli._COMMANDS, "list", boom)
+    cli.main(["list"])  # must NOT raise — EOFError handled in main

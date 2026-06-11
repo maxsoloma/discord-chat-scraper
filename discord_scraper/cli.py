@@ -12,8 +12,9 @@ DEFAULT_DB = "discord_archive.db"
 # Sentinel returned by selection menus when the user chooses "Back".
 BACK = object()
 
-# Guild channel types whose top-level message timeline can be archived.
-GUILD_TEXT_TYPES = (0, 5)  # GUILD_TEXT, GUILD_ANNOUNCEMENT
+# Guild channel types whose top-level message timeline can be archived
+# (single source of truth lives on the API client).
+GUILD_TEXT_TYPES = DiscordClient.FETCHABLE_TEXT_TYPES
 
 
 def _recipient_name(user):
@@ -230,4 +231,7 @@ _COMMANDS = {"auth": cmd_auth, "list": cmd_list, "sync": cmd_sync}
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    _COMMANDS[args.command](args)
+    try:
+        _COMMANDS[args.command](args)
+    except (EOFError, KeyboardInterrupt):
+        print()  # clean newline on Ctrl-D / Ctrl-C inside a menu
