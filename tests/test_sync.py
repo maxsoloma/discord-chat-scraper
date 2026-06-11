@@ -145,3 +145,35 @@ def test_update_reports_new_count_not_edit_window(tmp_path):
         assert total == 52
     finally:
         db.close()
+
+
+def test_backfill_reports_progress_per_page(tmp_path):
+    msgs = [_m(i) for i in range(1, 251)]  # 250 -> 3 pages (100, 100, 50)
+    client = FakeDiscordClient({"100": msgs})
+    db = Database(str(tmp_path / "a.db"))
+    try:
+        seen = []
+        Syncer(client, db).sync_channel(
+            {"id": "100", "type": 1, "recipients": []}, on_progress=seen.append
+        )
+        # progress reports the running total after each page
+        assert seen == [100, 200, 250]
+    finally:
+        db.close()
+
+
+def test_update_reports_progress_for_new_messages(tmp_path):
+    db = Database(str(tmp_path / "a.db"))
+    try:
+        db.upsert_channel({"id": "100", "type": 1, "recipients": []})
+        db.upsert_messages("100", [_m(1)])
+        db.set_sync_state("100", "1", "2026-01-01T00:00:00+00:00")
+        client = FakeDiscordClient({"100": [_m(i) for i in range(1, 252)]})  # 250 new
+
+        seen = []
+        Syncer(client, db).sync_channel(
+            {"id": "100", "type": 1, "recipients": []}, on_progress=seen.append
+        )
+        assert seen == [100, 200, 250]
+    finally:
+        db.close()

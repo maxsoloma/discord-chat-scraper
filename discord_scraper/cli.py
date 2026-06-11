@@ -1,6 +1,7 @@
 """Command-line interface: auth, list, sync (DMs, groups, and servers)."""
 
 import argparse
+import sys
 
 from .api import DiscordClient, Forbidden, Unauthorized
 from .auth import get_token
@@ -196,13 +197,26 @@ def _sync_whole_guild(client, db, guild, args):
         _sync_one_channel(client, db, channel, args)
 
 
+def _clear_progress_line(tty):
+    if tty:
+        print("\r\033[K", end="")  # carriage return + clear to end of line
+
+
 def _sync_one_channel(client, db, channel, args):
     label = channel_label(channel)
+    tty = sys.stdout.isatty()
+
+    def on_progress(count):
+        if tty:  # live, in-place count on a terminal; quiet when piped/redirected
+            print(f"\r  {label}: {count} messages...", end="", flush=True)
+
     try:
-        count = Syncer(client, db).sync_channel(channel)
+        count = Syncer(client, db).sync_channel(channel, on_progress=on_progress)
     except Forbidden:
+        _clear_progress_line(tty)
         print(f"  skipped {label} (no access)")
         return
+    _clear_progress_line(tty)
     print(f"Synced {count} message(s) for {label} -> {args.db}")
 
 

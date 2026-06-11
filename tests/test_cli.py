@@ -129,7 +129,7 @@ def test_cmd_sync_with_channel_id_runs_syncer(monkeypatch, tmp_path, capsys):
     class FakeSyncer:
         def __init__(self, client, db):
             captured["client"] = client
-        def sync_channel(self, channel):
+        def sync_channel(self, channel, on_progress=None):
             captured["channel"] = channel
             return 7
 
@@ -159,7 +159,7 @@ def test_cmd_sync_reauths_on_unauthorized(monkeypatch, tmp_path):
         def __init__(self, client, db):
             pass
 
-        def sync_channel(self, channel):
+        def sync_channel(self, channel, on_progress=None):
             FlakySyncer.calls += 1
             if FlakySyncer.calls == 1:
                 raise Unauthorized()  # stale token surfaces during the fetch
@@ -188,7 +188,7 @@ def _recording_syncer(monkeypatch, *, forbidden_ids=()):
         def __init__(self, client, db):
             pass
 
-        def sync_channel(self, channel):
+        def sync_channel(self, channel, on_progress=None):
             if channel["id"] in forbidden_ids:
                 raise Forbidden(channel["id"])
             synced.append(channel["id"])
@@ -309,3 +309,22 @@ def test_main_exits_cleanly_on_ctrl_d(monkeypatch):
 
     monkeypatch.setitem(cli._COMMANDS, "list", boom)
     cli.main(["list"])  # must NOT raise — EOFError handled in main
+
+
+def test_sync_one_channel_wires_progress_callback(monkeypatch, capsys):
+    received = {}
+
+    class CapturingSyncer:
+        def __init__(self, client, db):
+            pass
+
+        def sync_channel(self, channel, on_progress=None):
+            received["callback"] = on_progress
+            on_progress(42)  # must be safe to call (no-op when not a TTY)
+            return 5
+
+    monkeypatch.setattr(cli, "Syncer", CapturingSyncer)
+    cli._sync_one_channel(None, None, {"id": "9", "type": 0, "name": "gen"},
+                          types.SimpleNamespace(db="x.db"))
+    assert callable(received["callback"])
+    assert "Synced 5 message(s) for #gen" in capsys.readouterr().out
