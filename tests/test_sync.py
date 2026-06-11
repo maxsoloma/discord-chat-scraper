@@ -59,8 +59,9 @@ def test_update_fetches_only_new_messages(tmp_path):
         total = db.conn.execute("SELECT COUNT(*) AS c FROM messages").fetchone()["c"]
         assert total == 5
         assert db.newest_message_id("100") == "5"
-        # 'written' counts what the update fetched (>= the 2 new ones).
-        assert written >= 2
+        # 'written' is the count of NEW messages (4 and 5); the edit-window
+        # re-fetch of already-stored messages is not counted.
+        assert written == 2
     finally:
         db.close()
 
