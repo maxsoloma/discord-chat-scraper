@@ -55,6 +55,16 @@ class DiscordClient:
         channels = self._request("GET", "/users/@me/channels").json()
         return [c for c in channels if c.get("type") in (self.DM, self.GROUP_DM)]
 
+    def get_messages(self, channel_id, *, before=None, after=None, limit=100):
+        params = {"limit": limit}
+        if before is not None:
+            params["before"] = before
+        if after is not None:
+            params["after"] = after
+        return self._request(
+            "GET", f"/channels/{channel_id}/messages", params=params
+        ).json()
+
     def _request(self, method, path, *, params=None):
         resp = None
         for attempt in range(self._max_retries + 1):
