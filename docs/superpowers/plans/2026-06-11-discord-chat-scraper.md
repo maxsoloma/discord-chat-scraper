@@ -929,8 +929,21 @@ class FakeDiscordClient:
         if before is not None:
             msgs = [m for m in msgs if int(m["id"]) < int(before)]
         msgs = sorted(msgs, key=lambda m: int(m["id"]), reverse=True)  # newest-first
+        if after is not None:
+            # Discord `after`: the `limit` messages CLOSEST to the cursor (the oldest
+            # among those newer than it), still returned newest-first within the page.
+            # (Using msgs[:limit] here is WRONG — it returns the globally-newest window,
+            # which makes after-pagination terminate after one page and drop messages.)
+            return msgs[-limit:] if limit else []
         return msgs[:limit]
 ```
+
+> **Implementation note (correction discovered during execution):** an earlier draft of this
+> fake returned `msgs[:limit]` for the `after` branch too. That does not match Discord's
+> `after` semantics (which return the messages *immediately above* the cursor), so
+> `_fetch_after`'s cursor (`page[0]["id"]`, the newest) would jump to the channel's newest id
+> and the next page would be empty — silently dropping messages. The `after`-branch slice
+> must be `msgs[-limit:]`. The production `_fetch_after` in Task 10 is correct as written.
 
 - [ ] **Step 4: Run test to verify it passes**
 
