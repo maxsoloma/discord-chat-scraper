@@ -41,3 +41,45 @@ def test_backfill_fetches_all_messages_paginated(tmp_path):
         assert last_at is not None
     finally:
         db.close()
+
+
+def test_update_fetches_only_new_messages(tmp_path):
+    db = Database(str(tmp_path / "a.db"))
+    try:
+        # Pre-load the DB with messages 1..3 (newest stored = 3).
+        db.upsert_channel({"id": "100", "type": 1, "recipients": []})
+        db.upsert_messages("100", [_m(1), _m(2), _m(3)])
+        db.set_sync_state("100", "3", "2026-01-01T00:00:00+00:00")
+
+        # The server now has 1..5; update must add only 4 and 5.
+        client = FakeDiscordClient({"100": [_m(i) for i in range(1, 6)]})
+        syncer = Syncer(client, db, edit_window=200)
+        written = syncer.sync_channel({"id": "100", "type": 1, "recipients": []})
+
+        total = db.conn.execute("SELECT COUNT(*) AS c FROM messages").fetchone()["c"]
+        assert total == 5
+        assert db.newest_message_id("100") == "5"
+        # 'written' counts what the update fetched (>= the 2 new ones).
+        assert written >= 2
+    finally:
+        db.close()
+
+
+def test_update_with_more_than_one_page_of_new(tmp_path):
+    db = Database(str(tmp_path / "a.db"))
+    try:
+        db.upsert_channel({"id": "100", "type": 1, "recipients": []})
+        db.upsert_messages("100", [_m(1)])
+        db.set_sync_state("100", "1", "2026-01-01T00:00:00+00:00")
+
+        # 1 stored, server has 1..301 -> 300 new across 3 pages.
+        client = FakeDiscordClient({"100": [_m(i) for i in range(1, 302)]})
+        Syncer(client, db, edit_window=200).sync_channel(
+            {"id": "100", "type": 1, "recipients": []}
+        )
+
+        total = db.conn.execute("SELECT COUNT(*) AS c FROM messages").fetchone()["c"]
+        assert total == 301
+        assert db.newest_message_id("100") == "301"
+    finally:
+        db.close()

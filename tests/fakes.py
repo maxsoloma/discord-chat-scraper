@@ -22,4 +22,8 @@ class FakeDiscordClient:
         if before is not None:
             msgs = [m for m in msgs if int(m["id"]) < int(before)]
         msgs = sorted(msgs, key=lambda m: int(m["id"]), reverse=True)  # newest-first
+        if after is not None:
+            # Discord `after`: the `limit` messages CLOSEST to the cursor (the oldest
+            # among those newer than it), still returned newest-first within the page.
+            return msgs[-limit:] if limit else []
         return msgs[:limit]

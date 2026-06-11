@@ -44,3 +44,27 @@ class Syncer:
             if len(page) < PAGE_LIMIT:
                 break
         return total
+
+    def _update(self, channel_id, newest_stored):
+        total = self._fetch_after(channel_id, newest_stored)
+        total += self._refresh_edit_window(channel_id)
+        return total
+
+    def _fetch_after(self, channel_id, after_id):
+        cursor = after_id
+        total = 0
+        while True:
+            page = self._client.get_messages(
+                channel_id, after=cursor, limit=PAGE_LIMIT
+            )
+            if not page:
+                break
+            self._db.upsert_messages(channel_id, page)
+            total += len(page)
+            cursor = page[0]["id"]  # newest-first array -> first element is newest
+            if len(page) < PAGE_LIMIT:
+                break
+        return total
+
+    def _refresh_edit_window(self, channel_id):
+        return 0
