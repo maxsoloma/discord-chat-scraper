@@ -45,8 +45,15 @@ class DiscordClient:
     def close(self):
         self._client.close()
 
+    DM = 1
+    GROUP_DM = 3
+
     def get_current_user(self):
         return self._request("GET", "/users/@me").json()
+
+    def list_dm_channels(self):
+        channels = self._request("GET", "/users/@me/channels").json()
+        return [c for c in channels if c.get("type") in (self.DM, self.GROUP_DM)]
 
     def _request(self, method, path, *, params=None):
         resp = None
