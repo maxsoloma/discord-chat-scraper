@@ -122,3 +122,25 @@ def test_edit_window_respects_configured_size(tmp_path):
         assert refreshed == 10
     finally:
         db.close()
+
+
+def test_update_reports_new_count_not_edit_window(tmp_path):
+    db = Database(str(tmp_path / "a.db"))
+    try:
+        db.upsert_channel({"id": "100", "type": 1, "recipients": []})
+        db.upsert_messages("100", [_m(i) for i in range(1, 51)])  # 50 stored
+        db.set_sync_state("100", "50", "2026-01-01T00:00:00+00:00")
+
+        # Server has 1..52: only 51 and 52 are NEW. edit_window=200 re-fetches
+        # all 52 to catch edits, but the reported count must reflect ONLY the 2
+        # genuinely new messages, not the edit-window re-fetches.
+        client = FakeDiscordClient({"100": [_m(i) for i in range(1, 53)]})
+        written = Syncer(client, db, edit_window=200).sync_channel(
+            {"id": "100", "type": 1, "recipients": []}
+        )
+
+        assert written == 2  # NOT 2 + 52 edit-window re-fetches
+        total = db.conn.execute("SELECT COUNT(*) AS c FROM messages").fetchone()["c"]
+        assert total == 52
+    finally:
+        db.close()

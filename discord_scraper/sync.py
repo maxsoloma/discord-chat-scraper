@@ -16,7 +16,12 @@ class Syncer:
         self._edit_window = edit_window
 
     def sync_channel(self, channel):
-        """Backfill if the channel is new, otherwise update. Returns rows written."""
+        """Backfill if the channel is new, otherwise update.
+
+        Returns the number of NEW messages fetched (the full history on a first
+        backfill, or only the messages newer than the last sync on an update).
+        Edit-window re-fetches of already-stored messages are not counted.
+        """
         self._db.upsert_channel(channel)
         channel_id = channel["id"]
         newest = self._db.newest_message_id(channel_id)
@@ -46,9 +51,12 @@ class Syncer:
         return total
 
     def _update(self, channel_id, newest_stored):
-        total = self._fetch_after(channel_id, newest_stored)
-        total += self._refresh_edit_window(channel_id)
-        return total
+        new_count = self._fetch_after(channel_id, newest_stored)
+        # The edit window re-fetches recent messages to catch edits; those are
+        # already-stored messages, not new ones, so they are NOT counted in the
+        # reported total (otherwise "synced N" is inflated by up to edit_window).
+        self._refresh_edit_window(channel_id)
+        return new_count
 
     def _fetch_after(self, channel_id, after_id):
         cursor = after_id
