@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "discord_chat_scraper",
+  "project_id": "434b31f5-5d0b-4744-8270-2e3dfb7940f0"
+}
