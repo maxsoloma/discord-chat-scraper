@@ -1,6 +1,8 @@
 """SQLite storage for Discord channels and messages."""
 
+import json
 import sqlite3
+from datetime import datetime, timezone
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS channels (
@@ -41,6 +43,30 @@ CREATE INDEX IF NOT EXISTS idx_attachments_message ON attachments(message_id);
 """
 
 
+def _now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
+_MESSAGE_UPSERT = """
+INSERT INTO messages (
+    id, channel_id, author_id, author_username, author_global_name,
+    content, type, timestamp, edited_timestamp, referenced_message_id,
+    raw_json, fetched_at
+) VALUES (
+    :id, :channel_id, :author_id, :author_username, :author_global_name,
+    :content, :type, :timestamp, :edited_timestamp, :referenced_message_id,
+    :raw_json, :fetched_at
+)
+ON CONFLICT(id) DO UPDATE SET
+    content               = excluded.content,
+    type                  = excluded.type,
+    edited_timestamp      = excluded.edited_timestamp,
+    referenced_message_id = excluded.referenced_message_id,
+    raw_json              = excluded.raw_json,
+    fetched_at            = excluded.fetched_at
+"""
+
+
 class Database:
     """Thin SQLite wrapper for archived channels and messages."""
 
@@ -52,3 +78,46 @@ class Database:
 
     def close(self):
         self.conn.close()
+
+    def upsert_messages(self, channel_id, messages):
+        """Insert or update messages (and their attachments). Returns the count."""
+        now = _now_iso()
+        cur = self.conn.cursor()
+        for m in messages:
+            author = m.get("author") or {}
+            ref = m.get("message_reference") or {}
+            cur.execute(
+                _MESSAGE_UPSERT,
+                {
+                    "id": m["id"],
+                    "channel_id": channel_id,
+                    "author_id": author.get("id"),
+                    "author_username": author.get("username"),
+                    "author_global_name": author.get("global_name"),
+                    "content": m.get("content"),
+                    "type": m.get("type"),
+                    "timestamp": m.get("timestamp"),
+                    "edited_timestamp": m.get("edited_timestamp"),
+                    "referenced_message_id": ref.get("message_id"),
+                    "raw_json": json.dumps(m, ensure_ascii=False),
+                    "fetched_at": now,
+                },
+            )
+            cur.execute("DELETE FROM attachments WHERE message_id = ?", (m["id"],))
+            for a in m.get("attachments") or []:
+                cur.execute(
+                    "INSERT OR REPLACE INTO attachments "
+                    "(id, message_id, filename, url, proxy_url, size, content_type) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        a.get("id"),
+                        m["id"],
+                        a.get("filename"),
+                        a.get("url"),
+                        a.get("proxy_url"),
+                        a.get("size"),
+                        a.get("content_type"),
+                    ),
+                )
+        self.conn.commit()
+        return len(messages)
