@@ -32,10 +32,51 @@ def clear_token():
         pass
 
 
-import threading
-
 DISCORD_API_PREFIX = "https://discord.com/api/"
 LOGIN_URL = "https://discord.com/login"
+
+
+def _install_token_capture(context, *, api_prefix=DISCORD_API_PREFIX):
+    """Attach a request listener that records the first authenticated token.
+
+    Returns a mutable holder whose ``token`` key is filled in once an
+    authenticated request to the API is seen. Filtering on the presence of the
+    ``Authorization`` header skips the tokenless ``/api/`` calls Discord makes
+    before login. Attach this on the CONTEXT (not a single page) so requests
+    from any page/iframe are observed.
+    """
+    holder = {"token": None}
+
+    def on_request(request):
+        if holder["token"] is None and request.url.startswith(api_prefix):
+            token = request.header_value("authorization")
+            if token:
+                holder["token"] = token
+
+    context.on("request", on_request)
+    return holder
+
+
+def _poll_until_captured(page, holder, *, poll_ms=250, max_polls=None):
+    """Block until ``holder['token']`` is set, then return it.
+
+    The wait MUST go through a Playwright call (``page.wait_for_timeout``).
+    In Playwright's SYNC API, ``.on('request', ...)`` handlers are dispatched
+    only while the main thread is inside a Playwright call. Blocking on a plain
+    ``threading.Event().wait()`` never pumps the event loop, so the handler
+    never fires and login appears to "do nothing" — that was the bug this
+    replaces. ``max_polls`` bounds the loop for tests; production passes
+    ``None`` to wait indefinitely for the human to finish logging in.
+    """
+    polls = 0
+    while holder["token"] is None:
+        if page.is_closed():
+            raise RuntimeError("Browser window was closed before login completed.")
+        page.wait_for_timeout(poll_ms)
+        polls += 1
+        if max_polls is not None and polls >= max_polls:
+            break
+    return holder["token"]
 
 
 def capture_token_via_browser():
@@ -46,28 +87,20 @@ def capture_token_via_browser():
     """
     from playwright.sync_api import sync_playwright
 
-    holder = {"token": None}
-    captured = threading.Event()
-
-    def on_request(request):
-        if not request.url.startswith(DISCORD_API_PREFIX):
-            return
-        token = request.header_value("authorization")
-        if token:  # skip the tokenless /api/ calls Discord makes before login
-            holder["token"] = token
-            captured.set()
-
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
-        context = browser.new_context()
-        context.on("request", on_request)  # context-level: SPA/iframe safe
-        page = context.new_page()
-        page.goto(LOGIN_URL)
-        print("Log in to Discord in the opened window (incl. MFA). Waiting...")
-        captured.wait()  # blocks until the header is found (no timeout)
-        browser.close()
-
-    return holder["token"]
+        try:
+            context = browser.new_context()
+            holder = _install_token_capture(context)  # attach BEFORE navigating
+            page = context.new_page()
+            page.goto(LOGIN_URL)
+            print(
+                "Log in to Discord in the opened window (including MFA). "
+                "It will close automatically once your token is captured."
+            )
+            return _poll_until_captured(page, holder)
+        finally:
+            browser.close()
 
 
 def get_token(*, force_relogin=False):
